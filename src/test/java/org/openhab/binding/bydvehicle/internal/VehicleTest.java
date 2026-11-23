@@ -76,17 +76,99 @@ class VehicleTest {
         assertFalse(Telemetry.ready(sample));
     }
 
-    @SuppressWarnings("unchecked")
     @Test
-    void loginVehicleSelectionPollingAndExpiredSessionRecovery() throws Exception {
-        List<String> vectors;
-        try (var reader = new BufferedReader(new InputStreamReader(
-                Objects.requireNonNull(getClass().getResourceAsStream("/pybyd-responses.txt")), UTF_8))) {
-            vectors = reader.lines().toList();
+    void mapsMeasuredContactsAndPressureWithoutAssumingMissingValues() {
+        JsonObject data = JsonParser.parseString("""
+                {"leftFrontDoor":0,"rightFrontDoor":1,"leftFrontWindow":2,"rightFrontWindow":1,
+                 "leftRearDoorLock":2,"rightRearDoorLock":0,"backCover":1,"leftFrontTirepressure":2.5,"tirePressUnit":1}
+                """).getAsJsonObject();
+        var states = Telemetry.states(data);
+        assertEquals("OPEN", String.valueOf(states.get("trunk")));
+        assertEquals("CLOSED", String.valueOf(states.get("leftFrontDoor")));
+        assertEquals("OPEN", String.valueOf(states.get("rightFrontDoor")));
+        assertEquals("OPEN", String.valueOf(states.get("leftFrontWindow")));
+        assertEquals("CLOSED", String.valueOf(states.get("rightFrontWindow")));
+        assertEquals("ON", String.valueOf(states.get("leftRearLock")));
+        assertEquals(UnDefType.UNDEF, states.get("rightRearLock"));
+        assertEquals("2.5 bar", String.valueOf(states.get("leftFrontPressure")));
+        assertEquals(UnDefType.UNDEF, states.get("rightFrontPressure"));
+        data.remove("tirePressUnit");
+        assertEquals(UnDefType.UNDEF, Telemetry.states(data).get("leftFrontPressure"));
+    }
+
+    @Test
+    void readsChargingWindowAndGpsFix() {
+        JsonObject data = JsonParser.parseString("""
+                {"connectState":1,"fullHour":1,"fullMinute":17,
+                "smartChargeDto":{"status":"1","startChargeTime":"21:00","endChargeTime":"full","chargeWay":"e"}}
+                """).getAsJsonObject();
+        var states = Telemetry.charging(data);
+        assertEquals("77 min", String.valueOf(states.get("timeToFull")));
+        assertEquals("ON", String.valueOf(states.get("cableConnected")));
+        assertEquals("full", String.valueOf(states.get("scheduleEnd")));
+        assertEquals(UnDefType.UNDEF, Telemetry.location(data));
+        assertEquals(UnDefType.UNDEF, Telemetry.charging(new JsonObject()).get("scheduleEnabled"));
+        assertNotEquals(UnDefType.UNDEF, Telemetry
+                .location(JsonParser.parseString("{\"data\":{\"latitude\":-1,\"longitude\":2}}").getAsJsonObject()));
+    }
+
+    @Test
+    void mapsClimateParametersAndTerminalStates() {
+        JsonObject settings = RemoteAction.climateParams(21, 20);
+        assertEquals(7, settings.get("mainSettingTemp").getAsInt());
+        assertEquals(3, settings.get("timeSpan").getAsInt());
+        assertTrue(settings.get("airSet").isJsonNull());
+        assertThrows(IllegalArgumentException.class, () -> RemoteAction.climateParams(21, 8));
+        assertEquals("PENDING", RemoteAction.outcome(new JsonObject()));
+        for (int value : new int[] { 1, 2, 3, 4 }) {
+            JsonObject ack = new JsonObject();
+            ack.addProperty("res", value);
+            assertEquals(List.of("PENDING", "CONFIRMED", "REJECTED", "CONFIRMED").get(value - 1),
+                    RemoteAction.outcome(ack));
         }
-        int[] replies = { 0, 1, 2, 3, 4, 0, 1, 3 };
+    }
+
+    @Test
+    void verifiesPinThenTriggersOnceAndPolls() throws Exception {
+        List<String> session = fixtures("pybyd-responses.txt");
+        List<String> control = fixtures("control-responses.txt");
+        List<String> paths = new ArrayList<>();
+        BydClient client = scriptedClient(
+                List.of(session.get(0), session.get(1), control.get(0), control.get(2), control.get(3), control.get(4)),
+                paths);
+        String hash = BydProtocol.md5("123456");
+        JsonObject pending = client.control(RemoteAction.START_CLIMATE, hash, 21, 15, "");
+        assertEquals("PENDING", RemoteAction.outcome(pending));
+        JsonObject result = client.control(RemoteAction.START_CLIMATE, hash, 21, 15,
+                pending.get("requestSerial").getAsString());
+        assertEquals("CONFIRMED", RemoteAction.outcome(result));
+        assertEquals("REJECTED", RemoteAction.outcome(client.control(RemoteAction.STOP_CLIMATE, hash, 21, 15, "")));
+        assertEquals(List.of("/app/account/login", "/app/account/getAllListByUserId",
+                "/vehicle/vehicleswitch/verifyControlPassword", "/control/remoteControl",
+                "/control/remoteControlResult", "/control/remoteControl"), paths);
+    }
+
+    @Test
+    void rejectedPinStopsBeforeTrigger() throws Exception {
+        List<String> session = fixtures("pybyd-responses.txt");
+        List<String> paths = new ArrayList<>();
+        BydClient client = scriptedClient(
+                List.of(session.get(0), session.get(1), fixtures("control-responses.txt").get(1)), paths);
+        assertThrows(IOException.class,
+                () -> client.control(RemoteAction.UNLOCK, BydProtocol.md5("123456"), 21, 15, ""));
+        assertFalse(paths.contains("/control/remoteControl"));
+    }
+
+    private List<String> fixtures(String name) throws IOException {
+        try (var reader = new BufferedReader(
+                new InputStreamReader(Objects.requireNonNull(getClass().getResourceAsStream("/" + name)), UTF_8))) {
+            return reader.lines().toList();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private BydClient scriptedClient(List<String> vectors, List<String> endpoints) throws Exception {
         AtomicInteger sequence = new AtomicInteger();
-        List<String> endpoints = new ArrayList<>();
         HttpClient http = mock(HttpClient.class);
         when(http.send(any(HttpRequest.class), any())).thenAnswer(invocation -> {
             HttpRequest request = invocation.getArgument(0);
@@ -95,11 +177,19 @@ class VehicleTest {
             HttpResponse<String> response = mock(HttpResponse.class);
             when(response.statusCode()).thenReturn(200);
             JsonObject body = new JsonObject();
-            body.addProperty("response", vectors.get(replies[sequence.getAndIncrement()]));
+            body.addProperty("response", vectors.get(sequence.getAndIncrement()));
             when(response.body()).thenReturn(body.toString());
             return response;
         });
-        BydClient client = new BydClient("owner@example.invalid", "test password", "", http);
+        return new BydClient("owner@example.invalid", "test password", "", http);
+    }
+
+    @Test
+    void loginVehicleSelectionPollingAndExpiredSessionRecovery() throws Exception {
+        List<String> v = fixtures("pybyd-responses.txt");
+        List<String> endpoints = new ArrayList<>();
+        BydClient client = scriptedClient(
+                List.of(v.get(0), v.get(1), v.get(2), v.get(3), v.get(4), v.get(0), v.get(1), v.get(3)), endpoints);
         String serial = client.read("").get("requestSerial").getAsString();
         var states = Telemetry.states(client.read(serial));
         assertEquals("0 %", Objects.requireNonNull(states.get("battery")).toString());

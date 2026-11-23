@@ -32,7 +32,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 /**
- * Read-only client for a German BYD owner account and one electric vehicle.
+ * Cloud client for a German BYD owner account and one electric vehicle.
  *
  * @author Andreas Rothstein - Initial contribution
  */
@@ -46,6 +46,7 @@ final class BydClient {
     private final String requestedVin;
     private @Nullable Session session;
     private String vin = "";
+    private String verifiedKey = "";
 
     BydClient(String email, String password, String requestedVin) throws GeneralSecurityException, IOException {
         this(email, password, requestedVin, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
@@ -64,7 +65,7 @@ final class BydClient {
         http.shutdownNow();
     }
 
-    JsonObject read(String serial) throws GeneralSecurityException, IOException, InterruptedException {
+    private Session authenticate() throws GeneralSecurityException, IOException, InterruptedException {
         Session active = session;
         if (active == null) {
             JsonObject token = post("/app/account/login", protocol.login(now()), protocol.loginKey()).getAsJsonObject()
@@ -78,6 +79,11 @@ final class BydClient {
             JsonElement cars = post("/app/account/getAllListByUserId", query, active.contentKey());
             vin = selectVin(cars, requestedVin);
         }
+        return active;
+    }
+
+    synchronized JsonObject read(String serial) throws GeneralSecurityException, IOException, InterruptedException {
+        Session active = authenticate();
         JsonObject inner = protocol.base(now());
         BydProtocol.put(inner, "vin", vin, "energyType", "0", "tboxVersion", "3");
         if (!serial.isEmpty()) {
@@ -86,6 +92,52 @@ final class BydClient {
         String endpoint = serial.isEmpty() ? "vehicleRealTimeRequest" : "vehicleRealTimeResult";
         return post("/vehicleInfo/vehicle/" + endpoint, protocol.tokenRequest(inner, active, true), active.contentKey())
                 .getAsJsonObject();
+    }
+
+    synchronized JsonObject charging() throws GeneralSecurityException, IOException, InterruptedException {
+        return vehicleRequest("/control/smartCharge/homePage", new JsonObject(), false);
+    }
+
+    synchronized JsonObject gps(String serial) throws GeneralSecurityException, IOException, InterruptedException {
+        JsonObject fields = new JsonObject();
+        if (!serial.isEmpty()) {
+            fields.addProperty("requestSerial", serial);
+        }
+        return vehicleRequest(serial.isEmpty() ? "/control/getGpsInfo" : "/control/getGpsInfoResult", fields, true);
+    }
+
+    synchronized JsonObject control(RemoteAction action, String pinHash, int temperature, int minutes, String serial)
+            throws GeneralSecurityException, IOException, InterruptedException {
+        authenticate();
+        if (serial.isEmpty() && !pinHash.equals(verifiedKey)) {
+            JsonObject verification = new JsonObject();
+            BydProtocol.put(verification, "functionType", "remoteControl", "commandPwd", pinHash);
+            JsonObject verified = vehicleRequest("/vehicle/vehicleswitch/verifyControlPassword", verification, false);
+            if (verified.has("ok") && !"true".equalsIgnoreCase(Telemetry.text(verified, "ok"))) {
+                throw new IOException("Control PIN rejected");
+            }
+            verifiedKey = pinHash;
+        }
+        JsonObject fields = new JsonObject();
+        BydProtocol.put(fields, "commandType", action.wireName, "commandPwd", serial.isEmpty() ? pinHash : "");
+        if (serial.isEmpty()) {
+            if (action == RemoteAction.START_CLIMATE) {
+                fields.addProperty("controlParamsMap", RemoteAction.climateParams(temperature, minutes).toString());
+            }
+        } else {
+            fields.addProperty("requestSerial", serial);
+        }
+        return vehicleRequest(serial.isEmpty() ? "/control/remoteControl" : "/control/remoteControlResult", fields,
+                true);
+    }
+
+    private JsonObject vehicleRequest(String endpoint, JsonObject fields, boolean vehicle)
+            throws GeneralSecurityException, IOException, InterruptedException {
+        Session active = authenticate();
+        JsonObject inner = protocol.base(now());
+        inner.addProperty("vin", vin);
+        fields.entrySet().forEach(entry -> inner.add(entry.getKey(), entry.getValue()));
+        return post(endpoint, protocol.tokenRequest(inner, active, vehicle), active.contentKey()).getAsJsonObject();
     }
 
     static String selectVin(JsonElement cars, String requested) throws IOException {
@@ -132,6 +184,7 @@ final class BydClient {
         String code = required(result, "code");
         if (!"0".equals(code)) {
             if (EXPIRED.contains(code)) {
+                verifiedKey = "";
                 session = null;
                 vin = "";
             }

@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<update:update-descriptions
+	xmlns:update="https://openhab.org/schemas/update-description/v1.0.0">
+	<thing-type uid="bydvehicle:atto3">
+		<instruction-set targetVersion="1">
+			<add-channel id="leftFrontDoor">
+				<type>bydvehicle:leftFrontDoor</type>
+			</add-channel>
+			<add-channel id="leftFrontWindow">
+				<type>bydvehicle:leftFrontWindow</type>
+			</add-channel>
+			<add-channel id="leftFrontLock">
+				<type>bydvehicle:leftFrontLock</type>
+			</add-channel>
+			<add-channel id="leftFrontPressure">
+				<type>bydvehicle:leftFrontPressure</type>
+			</add-channel>
+			<add-channel id="rightFrontDoor">
+				<type>bydvehicle:rightFrontDoor</type>
+			</add-channel>
+			<add-channel id="rightFrontWindow">
+				<type>bydvehicle:rightFrontWindow</type>
+			</add-channel>
+			<add-channel id="rightFrontLock">
+				<type>bydvehicle:rightFrontLock</type>
+			</add-channel>
+			<add-channel id="rightFrontPressure">
+				<type>bydvehicle:rightFrontPressure</type>
+			</add-channel>
+			<add-channel id="leftRearDoor">
+				<type>bydvehicle:leftRearDoor</type>
+			</add-channel>
+			<add-channel id="leftRearWindow">
+				<type>bydvehicle:leftRearWindow</type>
+			</add-channel>
+			<add-channel id="leftRearLock">
+				<type>bydvehicle:leftRearLock</type>
+			</add-channel>
+			<add-channel id="leftRearPressure">
+				<type>bydvehicle:leftRearPressure</type>
+			</add-channel>
+			<add-channel id="rightRearDoor">
+				<type>bydvehicle:rightRearDoor</type>
+			</add-channel>
+			<add-channel id="rightRearWindow">
+				<type>bydvehicle:rightRearWindow</type>
+			</add-channel>
+			<add-channel id="rightRearLock">
+				<type>bydvehicle:rightRearLock</type>
+			</add-channel>
+			<add-channel id="rightRearPressure">
+				<type>bydvehicle:rightRearPressure</type>
+			</add-channel>
+			<add-channel id="trunk">
+				<type>bydvehicle:trunk</type>
+			</add-channel>
+			<add-channel id="location">
+				<type>bydvehicle:location</type>
+			</add-channel>
+			<add-channel id="cableConnected">
+				<type>bydvehicle:cableConnected</type>
+			</add-channel>
+			<add-channel id="timeToFull">
+				<type>bydvehicle:timeToFull</type>
+			</add-channel>
+			<add-channel id="scheduleEnabled">
+				<type>bydvehicle:scheduleEnabled</type>
+			</add-channel>
+			<add-channel id="scheduleStart">
+				<type>bydvehicle:scheduleStart</type>
+			</add-channel>
+			<add-channel id="scheduleEnd">
+				<type>bydvehicle:scheduleEnd</type>
+			</add-channel>
+			<add-channel id="scheduleRepeat">
+				<type>bydvehicle:scheduleRepeat</type>
+			</add-channel>
+			<add-channel id="remoteCommand">
+				<type>bydvehicle:remoteCommand</type>
+			</add-channel>
+			<add-channel id="commandResult">
+				<type>bydvehicle:commandResult</type>
+			</add-channel>
+		</instruction-set>
+	</thing-type>
+</update:update-descriptions>

@@ -10,7 +10,36 @@
 			<channel id="odometer" typeId="odometer"/>
 			<channel id="chargingStatus" typeId="chargingStatus"/>
 			<channel id="lastReport" typeId="lastReport"/>
+			<channel id="leftFrontDoor" typeId="leftFrontDoor"/>
+			<channel id="leftFrontWindow" typeId="leftFrontWindow"/>
+			<channel id="leftFrontLock" typeId="leftFrontLock"/>
+			<channel id="leftFrontPressure" typeId="leftFrontPressure"/>
+			<channel id="rightFrontDoor" typeId="rightFrontDoor"/>
+			<channel id="rightFrontWindow" typeId="rightFrontWindow"/>
+			<channel id="rightFrontLock" typeId="rightFrontLock"/>
+			<channel id="rightFrontPressure" typeId="rightFrontPressure"/>
+			<channel id="leftRearDoor" typeId="leftRearDoor"/>
+			<channel id="leftRearWindow" typeId="leftRearWindow"/>
+			<channel id="leftRearLock" typeId="leftRearLock"/>
+			<channel id="leftRearPressure" typeId="leftRearPressure"/>
+			<channel id="rightRearDoor" typeId="rightRearDoor"/>
+			<channel id="rightRearWindow" typeId="rightRearWindow"/>
+			<channel id="rightRearLock" typeId="rightRearLock"/>
+			<channel id="rightRearPressure" typeId="rightRearPressure"/>
+			<channel id="trunk" typeId="trunk"/>
+			<channel id="location" typeId="location"/>
+			<channel id="cableConnected" typeId="cableConnected"/>
+			<channel id="timeToFull" typeId="timeToFull"/>
+			<channel id="scheduleEnabled" typeId="scheduleEnabled"/>
+			<channel id="scheduleStart" typeId="scheduleStart"/>
+			<channel id="scheduleEnd" typeId="scheduleEnd"/>
+			<channel id="scheduleRepeat" typeId="scheduleRepeat"/>
+			<channel id="remoteCommand" typeId="remoteCommand"/>
+			<channel id="commandResult" typeId="commandResult"/>
 		</channels>
+		<properties>
+			<property name="thingTypeVersion">1</property>
+		</properties>
 		<config-description>
 			<parameter name="email" type="text" required="true">
 				<label>Account Email</label>
@@ -27,6 +56,24 @@
 			<parameter name="refreshInterval" type="integer" min="1" unit="min">
 				<label>Refresh Interval</label>
 				<description>Time between telemetry requests in minutes.</description>
+				<default>15</default>
+			</parameter>
+			<parameter name="enableControl" type="boolean">
+				<label>Enable Remote Commands</label>
+				<description>Allow explicit commands to be sent to the vehicle.</description>
+				<default>false</default>
+			</parameter>
+			<parameter name="controlPin" type="text">
+				<context>password</context>
+				<label>BYD Control PIN</label>
+				<description>Six-digit operation PIN configured in the BYD app.</description>
+			</parameter>
+			<parameter name="climateTemperature" type="integer" min="15" max="31">
+				<label>Climate Target (°C)</label>
+				<default>21</default>
+			</parameter>
+			<parameter name="climateDuration" type="integer" min="10" max="30" step="5">
+				<label>Climate Duration (Minutes)</label>
 				<default>15</default>
 			</parameter>
 		</config-description>
@@ -59,6 +106,146 @@
 		<item-type>DateTime</item-type>
 		<label>Last Vehicle Report</label>
 		<description>Time of the sample reported by the vehicle.</description>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="leftFrontDoor">
+		<item-type>Contact</item-type>
+		<label>Front Left Door</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="leftFrontWindow">
+		<item-type>Contact</item-type>
+		<label>Front Left Window</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="leftFrontLock">
+		<item-type>Switch</item-type>
+		<label>Front Left Door Locked</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="leftFrontPressure">
+		<item-type unitHint="bar">Number:Pressure</item-type>
+		<label>Front Left Tire Pressure</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="rightFrontDoor">
+		<item-type>Contact</item-type>
+		<label>Front Right Door</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="rightFrontWindow">
+		<item-type>Contact</item-type>
+		<label>Front Right Window</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="rightFrontLock">
+		<item-type>Switch</item-type>
+		<label>Front Right Door Locked</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="rightFrontPressure">
+		<item-type unitHint="bar">Number:Pressure</item-type>
+		<label>Front Right Tire Pressure</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="leftRearDoor">
+		<item-type>Contact</item-type>
+		<label>Rear Left Door</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="leftRearWindow">
+		<item-type>Contact</item-type>
+		<label>Rear Left Window</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="leftRearLock">
+		<item-type>Switch</item-type>
+		<label>Rear Left Door Locked</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="leftRearPressure">
+		<item-type unitHint="bar">Number:Pressure</item-type>
+		<label>Rear Left Tire Pressure</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="rightRearDoor">
+		<item-type>Contact</item-type>
+		<label>Rear Right Door</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="rightRearWindow">
+		<item-type>Contact</item-type>
+		<label>Rear Right Window</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="rightRearLock">
+		<item-type>Switch</item-type>
+		<label>Rear Right Door Locked</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="rightRearPressure">
+		<item-type unitHint="bar">Number:Pressure</item-type>
+		<label>Rear Right Tire Pressure</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="trunk">
+		<item-type>Contact</item-type>
+		<label>Tailgate</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="location">
+		<item-type>Location</item-type>
+		<label>GPS Position</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="cableConnected">
+		<item-type>Switch</item-type>
+		<label>Charging Cable Connected</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="timeToFull">
+		<item-type unitHint="min">Number:Time</item-type>
+		<label>Time to Full Charge</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="scheduleEnabled">
+		<item-type>Switch</item-type>
+		<label>Charge Schedule Enabled</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="scheduleStart">
+		<item-type>String</item-type>
+		<label>Scheduled Charge Start</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="scheduleEnd">
+		<item-type>String</item-type>
+		<label>Scheduled Charge End</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="scheduleRepeat">
+		<item-type>String</item-type>
+		<label>Charge Schedule Repeat</label>
+		<state readOnly="true"/>
+	</channel-type>
+	<channel-type id="remoteCommand">
+		<item-type>String</item-type>
+		<label>Remote Command</label>
+		<command>
+			<options>
+				<option value="START_CLIMATE">Start Climate</option>
+				<option value="STOP_CLIMATE">Stop Climate</option>
+				<option value="LOCK">Lock</option>
+				<option value="UNLOCK">Unlock</option>
+				<option value="CLOSE_WINDOWS">Close Windows</option>
+				<option value="FLASH_LIGHTS">Flash Lights</option>
+			</options>
+		</command>
+		<autoUpdatePolicy>veto</autoUpdatePolicy>
+	</channel-type>
+	<channel-type id="commandResult">
+		<item-type>String</item-type>
+		<label>Last Command Result</label>
 		<state readOnly="true"/>
 	</channel-type>
 </thing:thing-descriptions>
