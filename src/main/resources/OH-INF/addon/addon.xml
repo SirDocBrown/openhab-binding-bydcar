@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon:addon xmlns:addon="https://openhab.org/schemas/addon/v1.0.0" id="bydvehicle">
+	<type>binding</type>
+	<name>BYD Vehicle</name>
+	<description>Reads electric vehicle telemetry from the European BYD cloud.</description>
+	<connection>cloud</connection>
+</addon:addon>

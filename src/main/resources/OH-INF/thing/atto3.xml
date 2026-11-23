@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<thing:thing-descriptions xmlns:thing="https://openhab.org/schemas/thing-description/v1.0.0"
+	bindingId="bydvehicle">
+	<thing-type id="atto3">
+		<label>BYD ATTO 3</label>
+		<description>Electric vehicle linked to a German BYD owner account.</description>
+		<channels>
+			<channel id="battery" typeId="battery"/>
+			<channel id="range" typeId="range"/>
+			<channel id="odometer" typeId="odometer"/>
+			<channel id="chargingStatus" typeId="chargingStatus"/>
+			<channel id="lastReport" typeId="lastReport"/>
+		</channels>
+		<config-description>
+			<parameter name="email" type="text" required="true">
+				<label>Account Email</label>
+				<description>Email address registered in the German BYD app.</description>
+			</parameter>
+			<parameter name="password" type="text" required="true">
+				<context>password</context>
+				<label>Account Password</label>
+			</parameter>
+			<parameter name="vin" type="text">
+				<label>Vehicle Identification Number</label>
+				<description>Required when the account has more than one vehicle.</description>
+			</parameter>
+			<parameter name="refreshInterval" type="integer" min="1" unit="min">
+				<label>Refresh Interval</label>
+				<description>Time between telemetry requests in minutes.</description>
+				<default>15</default>
+			</parameter>
+		</config-description>
+	</thing-type>
+	<channel-type id="battery">
+		<item-type unitHint="%">Number:Dimensionless</item-type>
+		<label>Battery Level</label>
+		<description>Reported traction battery state of charge.</description>
+		<state readOnly="true" pattern="%.0f %unit%"/>
+	</channel-type>
+	<channel-type id="range">
+		<item-type unitHint="km">Number:Length</item-type>
+		<label>Electric Range</label>
+		<description>Estimated remaining driving range.</description>
+		<state readOnly="true" pattern="%.0f %unit%"/>
+	</channel-type>
+	<channel-type id="odometer">
+		<item-type unitHint="km">Number:Length</item-type>
+		<label>Odometer</label>
+		<description>Total distance driven.</description>
+		<state readOnly="true" pattern="%.1f %unit%"/>
+	</channel-type>
+	<channel-type id="chargingStatus">
+		<item-type>String</item-type>
+		<label>Charging Status</label>
+		<description>Charging state reported by the vehicle.</description>
+		<state readOnly="true" pattern="%s"/>
+	</channel-type>
+	<channel-type id="lastReport">
+		<item-type>DateTime</item-type>
+		<label>Last Vehicle Report</label>
+		<description>Time of the sample reported by the vehicle.</description>
+		<state readOnly="true"/>
+	</channel-type>
+</thing:thing-descriptions>
