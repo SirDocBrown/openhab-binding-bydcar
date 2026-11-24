@@ -32,6 +32,8 @@ import org.openhab.core.types.Command;
 import org.openhab.core.types.RefreshType;
 import org.openhab.core.types.State;
 import org.openhab.core.types.UnDefType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -43,6 +45,7 @@ import com.google.gson.JsonObject;
  */
 @NonNullByDefault
 public class VehicleHandler extends BaseThingHandler {
+    private final Logger logger = LoggerFactory.getLogger(VehicleHandler.class);
     private @Nullable BydClient client;
     private @Nullable ScheduledFuture<?> job;
     private int interval;
@@ -73,7 +76,7 @@ public class VehicleHandler extends BaseThingHandler {
     @Override
     public synchronized void initialize() {
         Configuration config = getConfigAs(Configuration.class);
-        if (config.email.isBlank() || config.password.isEmpty() || config.refreshInterval < 1) {
+        if (config.email.isBlank() || config.password.isEmpty() || config.refreshInterval < 5) {
             updateStatus(ThingStatusDetail.CONFIGURATION_ERROR, "@text/config-invalid");
             return;
         }
@@ -129,16 +132,28 @@ public class VehicleHandler extends BaseThingHandler {
             Thread.currentThread().interrupt();
         } catch (BydClient.SetupException e) {
             reportFailure(active, ThingStatusDetail.CONFIGURATION_ERROR, e.getMessage());
+        } catch (BydClient.BydApiException e) {
+            reportFailure(active, ThingStatusDetail.COMMUNICATION_ERROR, e.getMessage());
         } catch (IOException e) {
             reportFailure(active, ThingStatusDetail.COMMUNICATION_ERROR,
                     e.getClass() == IOException.class ? e.getMessage() : "@text/request-failed");
         } catch (GeneralSecurityException | RuntimeException e) {
+            logFailure("Telemetry", e);
             reportFailure(active, ThingStatusDetail.COMMUNICATION_ERROR, "@text/request-failed");
         }
         synchronized (this) {
             if (active.equals(client)) {
                 job = scheduler.schedule(() -> poll(active, "", 0), interval, TimeUnit.MINUTES);
             }
+        }
+    }
+
+    private void logFailure(String operation, Exception failure) {
+        if (logger.isDebugEnabled()) {
+            // Parser and transport exception messages may contain the response or account data.
+            Throwable trace = new Throwable(failure.getClass().getName());
+            trace.setStackTrace(failure.getStackTrace());
+            logger.debug("BYD {} failed", operation, trace);
         }
     }
 
@@ -163,6 +178,7 @@ public class VehicleHandler extends BaseThingHandler {
         try {
             values = Telemetry.charging(active.charging());
         } catch (IOException | GeneralSecurityException | RuntimeException e) {
+            logFailure("charging", e);
             values = Telemetry.charging(new JsonObject());
         }
         synchronized (this) {
@@ -182,8 +198,8 @@ public class VehicleHandler extends BaseThingHandler {
             next = received.isEmpty() ? serial : received;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-        } catch (IOException | GeneralSecurityException | RuntimeException ignored) {
-            // Location failures do not invalidate the vehicle telemetry.
+        } catch (IOException | GeneralSecurityException | RuntimeException e) {
+            logFailure("GPS", e);
         }
         synchronized (this) {
             if (!active.equals(client)) {
@@ -208,14 +224,17 @@ public class VehicleHandler extends BaseThingHandler {
     @Override
     public synchronized void handleCommand(ChannelUID channel, Command command) {
         BydClient active = client;
-        if (active != null && "remoteCommand".equals(channel.getId()) && command instanceof StringType requested) {
-            if (controlKey.isEmpty() || commandJob != null) {
-                return;
-            }
+        if ("remoteCommand".equals(channel.getId()) && command instanceof StringType requested) {
             RemoteAction action;
             try {
                 action = RemoteAction.valueOf(requested.toString());
             } catch (IllegalArgumentException ignored) {
+                publish("commandResult", new StringType("INVALID: " + requested));
+                return;
+            }
+            if (controlKey.isEmpty() || active == null || commandJob != null) {
+                String state = controlKey.isEmpty() || active == null ? "DISABLED" : "BUSY";
+                publish("commandResult", new StringType(action.name() + ": " + state));
                 return;
             }
             String key = controlKey;
@@ -245,8 +264,14 @@ public class VehicleHandler extends BaseThingHandler {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-        } catch (IOException | GeneralSecurityException | RuntimeException ignored) {
-            // A lost response can occur after execution. Never replay a trigger.
+        } catch (BydClient.BydApiException e) {
+            if (serial.isEmpty()) {
+                outcome = "6024".equals(e.code) ? "BUSY" : "REJECTED (code " + e.code + ")";
+            }
+        } catch (BydClient.PinRejectedException e) {
+            outcome = "REJECTED";
+        } catch (IOException | GeneralSecurityException | RuntimeException e) {
+            logFailure("remote control", e);
         }
         synchronized (this) {
             if (!active.equals(client)) {

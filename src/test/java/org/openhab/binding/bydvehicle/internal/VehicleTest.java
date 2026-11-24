@@ -21,10 +21,16 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -166,15 +172,26 @@ class VehicleTest {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private BydClient scriptedClient(List<String> vectors, List<String> endpoints) throws Exception {
+        return scriptedClient(vectors, endpoints, Map.of());
+    }
+
+    @SuppressWarnings("unchecked")
+    private BydClient scriptedClient(List<String> vectors, List<String> endpoints, Map<Integer, String> dates)
+            throws Exception {
         AtomicInteger sequence = new AtomicInteger();
         HttpClient http = mock(HttpClient.class);
         when(http.send(any(HttpRequest.class), any())).thenAnswer(invocation -> {
             HttpRequest request = invocation.getArgument(0);
             endpoints.add(request.uri().getPath());
             assertEquals("dilinkappoversea-eu.byd.auto", request.uri().getHost());
+            if (sequence.get() == vectors.size()) {
+                throw new java.net.http.HttpTimeoutException("Scripted timeout");
+            }
             HttpResponse<String> response = mock(HttpResponse.class);
+            String date = dates.get(sequence.get());
+            Map<String, List<String>> headers = date == null ? Map.of() : Map.of("Date", List.of(date));
+            when(response.headers()).thenReturn(HttpHeaders.of(headers, (name, value) -> true));
             when(response.statusCode()).thenReturn(200);
             JsonObject body = new JsonObject();
             body.addProperty("response", vectors.get(sequence.getAndIncrement()));
@@ -194,12 +211,100 @@ class VehicleTest {
         var states = Telemetry.states(client.read(serial));
         assertEquals("0 %", Objects.requireNonNull(states.get("battery")).toString());
         assertEquals("SCHEDULED", Objects.requireNonNull(states.get("chargingStatus")).toString());
-        assertThrows(IOException.class, () -> client.read(""));
         assertTrue(Telemetry.ready(client.read("")));
         String login = "/app/account/login";
         String list = "/app/account/getAllListByUserId";
         String trigger = "/vehicleInfo/vehicle/vehicleRealTimeRequest";
         assertEquals(List.of(login, list, trigger, "/vehicleInfo/vehicle/vehicleRealTimeResult", trigger, login, list,
                 trigger), endpoints);
+    }
+
+    private String error(String code) throws IOException {
+        JsonObject result = new JsonObject();
+        result.addProperty("code", code);
+        return new Bangcle().encode(result.toString());
+    }
+
+    @Test
+    void retriesRejectedTriggerAndNeverRetriggersWhilePolling() throws Exception {
+        var v = fixtures("pybyd-responses.txt");
+        var c = fixtures("control-responses.txt");
+        List<String> paths = new ArrayList<>();
+        var client = scriptedClient(List.of(v.get(0), v.get(1), c.get(0), error("1011"), v.get(0), v.get(1), c.get(0),
+                c.get(2), error("3003"), v.get(0), v.get(1), c.get(3)), paths);
+        String key = BydProtocol.md5("123456");
+        String serial = client.control(RemoteAction.LOCK, key, 21, 15, "").get("requestSerial").getAsString();
+        assertEquals("CONFIRMED", RemoteAction.outcome(client.control(RemoteAction.LOCK, key, 21, 15, serial)));
+        assertEquals(List.of("/app/account/login", "/app/account/getAllListByUserId",
+                "/vehicle/vehicleswitch/verifyControlPassword", "/control/remoteControl", "/app/account/login",
+                "/app/account/getAllListByUserId", "/vehicle/vehicleswitch/verifyControlPassword",
+                "/control/remoteControl", "/control/remoteControlResult", "/app/account/login",
+                "/app/account/getAllListByUserId", "/control/remoteControlResult"), paths);
+    }
+
+    @Test
+    void retriesExtrasOnceAndPropagatesSecondRejection() throws Exception {
+        var v = fixtures("pybyd-responses.txt");
+        for (boolean gps : List.of(true, false)) {
+            List<String> paths = new ArrayList<>();
+            var client = scriptedClient(List.of(v.get(0), v.get(1), error("1030"), v.get(0), v.get(1), error("3001")),
+                    paths);
+            var failure = assertThrows(BydClient.BydApiException.class, () -> {
+                if (gps)
+                    client.gps("serial");
+                else
+                    client.charging();
+            });
+            assertEquals("3001", failure.code);
+            assertEquals(2,
+                    Collections.frequency(paths, gps ? "/control/getGpsInfoResult" : "/control/smartCharge/homePage"));
+        }
+    }
+
+    @Test
+    void loginFailureAndBusyTriggerAreNeverRetried() throws Exception {
+        var v = fixtures("pybyd-responses.txt");
+        var c = fixtures("control-responses.txt");
+        List<String> paths = new ArrayList<>();
+        var login = scriptedClient(List.of(error("1002")), paths);
+        assertEquals("1002", assertThrows(BydClient.BydApiException.class, () -> login.read("")).code);
+        assertEquals(List.of("/app/account/login"), paths);
+        paths.clear();
+        var busy = scriptedClient(List.of(v.get(0), v.get(1), c.get(0), error("6024")), paths);
+        assertEquals("6024", assertThrows(BydClient.BydApiException.class,
+                () -> busy.control(RemoteAction.LOCK, "hash", 21, 15, "")).code);
+        assertEquals(1, Collections.frequency(paths, "/control/remoteControl"));
+    }
+
+    @Test
+    void retriesClockErrorOnlyWithServerTime() throws Exception {
+        var v = fixtures("pybyd-responses.txt");
+        List<String> paths = new ArrayList<>();
+        String date = ZonedDateTime.now(ZoneOffset.UTC).plusMinutes(10).format(DateTimeFormatter.RFC_1123_DATE_TIME);
+        var client = scriptedClient(List.of(v.get(0), v.get(1), error("1003"), v.get(3)), paths, Map.of(2, date));
+        assertTrue(Telemetry.ready(client.read("")));
+        assertEquals(1, Collections.frequency(paths, "/app/account/login"));
+        paths.clear();
+        var missing = scriptedClient(List.of(v.get(0), v.get(1), error("1003")), paths);
+        assertTrue(Objects
+                .requireNonNull(assertThrows(BydClient.BydApiException.class, () -> missing.read("")).getMessage())
+                .contains("system time"));
+    }
+
+    @Test
+    void doesNotReplayTriggerOnClockErrorOrLostResponse() throws Exception {
+        var v = fixtures("pybyd-responses.txt");
+        var c = fixtures("control-responses.txt");
+        String date = ZonedDateTime.now(ZoneOffset.UTC).plusMinutes(10).format(DateTimeFormatter.RFC_1123_DATE_TIME);
+        List<String> paths = new ArrayList<>();
+        var client = scriptedClient(List.of(v.get(0), v.get(1), c.get(0), error("1003")), paths, Map.of(3, date));
+        assertEquals("1003", assertThrows(BydClient.BydApiException.class,
+                () -> client.control(RemoteAction.LOCK, "hash", 21, 15, "")).code);
+        assertEquals(1, Collections.frequency(paths, "/control/remoteControl"));
+        paths.clear();
+        var lost = scriptedClient(List.of(v.get(0), v.get(1), c.get(0)), paths);
+        assertThrows(java.net.http.HttpTimeoutException.class,
+                () -> lost.control(RemoteAction.LOCK, "hash", 21, 15, ""));
+        assertEquals(1, Collections.frequency(paths, "/control/remoteControl"));
     }
 }

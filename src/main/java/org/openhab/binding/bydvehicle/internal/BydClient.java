@@ -21,11 +21,16 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.security.GeneralSecurityException;
 import java.time.Duration;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.bydvehicle.internal.BydProtocol.Session;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -40,6 +45,9 @@ import com.google.gson.JsonParser;
 final class BydClient {
     private static final String API = "https://dilinkappoversea-eu.byd.auto";
     private static final Set<String> EXPIRED = Set.of("1002", "1011", "1030", "3001", "3003");
+    private static final String LOGIN = "/app/account/login";
+    private final Logger logger = LoggerFactory.getLogger(BydClient.class);
+    private long clockOffset;
     private final HttpClient http;
     private final BydProtocol protocol;
     private final Bangcle codec;
@@ -49,16 +57,17 @@ final class BydClient {
     private String verifiedKey = "";
 
     BydClient(String email, String password, String requestedVin) throws GeneralSecurityException, IOException {
-        this(email, password, requestedVin, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
-                .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ORIGINAL_SERVER)).build());
+        this(email, password, requestedVin, null);
     }
 
-    BydClient(String email, String password, String requestedVin, HttpClient http)
+    BydClient(String email, String password, String requestedVin, @Nullable HttpClient supplied)
             throws GeneralSecurityException, IOException {
-        this.http = http;
         this.protocol = new BydProtocol(email, password);
         this.codec = new Bangcle();
         this.requestedVin = requestedVin;
+        this.http = supplied != null ? supplied
+                : HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
+                        .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ORIGINAL_SERVER)).build();
     }
 
     void stop() {
@@ -68,7 +77,7 @@ final class BydClient {
     private Session authenticate() throws GeneralSecurityException, IOException, InterruptedException {
         Session active = session;
         if (active == null) {
-            JsonObject token = post("/app/account/login", protocol.login(now()), protocol.loginKey()).getAsJsonObject()
+            JsonObject token = post(LOGIN, protocol.login(now()), protocol.loginKey()).getAsJsonObject()
                     .getAsJsonObject("token");
             active = new Session(required(token, "userId"), BydProtocol.md5(required(token, "signToken")),
                     BydProtocol.md5(required(token, "encryToken")));
@@ -83,19 +92,17 @@ final class BydClient {
     }
 
     synchronized JsonObject read(String serial) throws GeneralSecurityException, IOException, InterruptedException {
-        Session active = authenticate();
-        JsonObject inner = protocol.base(now());
-        BydProtocol.put(inner, "vin", vin, "energyType", "0", "tboxVersion", "3");
+        JsonObject fields = new JsonObject();
+        BydProtocol.put(fields, "energyType", "0", "tboxVersion", "3");
         if (!serial.isEmpty()) {
-            inner.addProperty("requestSerial", serial);
+            fields.addProperty("requestSerial", serial);
         }
         String endpoint = serial.isEmpty() ? "vehicleRealTimeRequest" : "vehicleRealTimeResult";
-        return post("/vehicleInfo/vehicle/" + endpoint, protocol.tokenRequest(inner, active, true), active.contentKey())
-                .getAsJsonObject();
+        return retry(() -> vehicleRequest("/vehicleInfo/vehicle/" + endpoint, fields, true));
     }
 
     synchronized JsonObject charging() throws GeneralSecurityException, IOException, InterruptedException {
-        return vehicleRequest("/control/smartCharge/homePage", new JsonObject(), false);
+        return retry(() -> vehicleRequest("/control/smartCharge/homePage", new JsonObject(), false));
     }
 
     synchronized JsonObject gps(String serial) throws GeneralSecurityException, IOException, InterruptedException {
@@ -103,10 +110,16 @@ final class BydClient {
         if (!serial.isEmpty()) {
             fields.addProperty("requestSerial", serial);
         }
-        return vehicleRequest(serial.isEmpty() ? "/control/getGpsInfo" : "/control/getGpsInfoResult", fields, true);
+        return retry(() -> vehicleRequest(serial.isEmpty() ? "/control/getGpsInfo" : "/control/getGpsInfoResult",
+                fields, true));
     }
 
     synchronized JsonObject control(RemoteAction action, String pinHash, int temperature, int minutes, String serial)
+            throws GeneralSecurityException, IOException, InterruptedException {
+        return retry(() -> controlRequest(action, pinHash, temperature, minutes, serial));
+    }
+
+    private JsonObject controlRequest(RemoteAction action, String pinHash, int temperature, int minutes, String serial)
             throws GeneralSecurityException, IOException, InterruptedException {
         authenticate();
         if (serial.isEmpty() && !pinHash.equals(verifiedKey)) {
@@ -114,7 +127,7 @@ final class BydClient {
             BydProtocol.put(verification, "functionType", "remoteControl", "commandPwd", pinHash);
             JsonObject verified = vehicleRequest("/vehicle/vehicleswitch/verifyControlPassword", verification, false);
             if (verified.has("ok") && !"true".equalsIgnoreCase(Telemetry.text(verified, "ok"))) {
-                throw new IOException("Control PIN rejected");
+                throw new PinRejectedException();
             }
             verifiedKey = pinHash;
         }
@@ -153,8 +166,8 @@ final class BydClient {
         throw new SetupException("Check the vehicle VIN and its assignment to the BYD account.");
     }
 
-    private static String now() {
-        return Long.toString(System.currentTimeMillis());
+    private String now() {
+        return Long.toString(System.currentTimeMillis() + clockOffset);
     }
 
     private static String required(JsonObject source, String name) throws IOException {
@@ -174,6 +187,9 @@ final class BydClient {
                 .header("User-Agent", "okhttp/4.12.0").POST(HttpRequest.BodyPublishers.ofString(wrapper.toString()))
                 .build();
         HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+        long previousOffset = clockOffset;
+        response.headers().firstValue("Date").ifPresent(this::adjustClock);
+        logger.debug("BYD endpoint {} returned HTTP {}", endpoint, response.statusCode());
         if (response.statusCode() != 200) {
             throw new IOException("BYD returned HTTP " + response.statusCode());
         }
@@ -182,20 +198,78 @@ final class BydClient {
         JsonObject result = JsonParser.parseString(decoded.startsWith("F{") ? decoded.substring(1) : decoded)
                 .getAsJsonObject();
         String code = required(result, "code");
+        String safeCode = code.matches("[0-9]{1,8}") ? code : "unknown";
+        logger.debug("BYD endpoint {} returned code {}", endpoint, safeCode);
         if (!"0".equals(code)) {
             if (EXPIRED.contains(code)) {
                 verifiedKey = "";
                 session = null;
                 vin = "";
+                if (!LOGIN.equals(endpoint)) {
+                    throw new SessionExpiredException(safeCode);
+                }
             }
-            String safeCode = code.matches("[0-9]{1,8}") ? code : "unknown";
-            if ("/app/account/login".equals(endpoint)) {
-                throw new IOException(
-                        "BYD login rejected (code " + safeCode + "). Check account details and system time.");
+            if ("1003".equals(code) && Math.abs(previousOffset - clockOffset) > 30_000 && !LOGIN.equals(endpoint)
+                    && !"/control/remoteControl".equals(endpoint)) {
+                throw new ClockAdjustedException();
             }
-            throw new IOException("BYD telemetry unavailable (code " + safeCode + ").");
+            throw new BydApiException(safeCode);
         }
         return JsonParser.parseString(BydProtocol.decrypt(required(result, "respondData"), key));
+    }
+
+    private void adjustClock(String date) {
+        try {
+            long difference = ZonedDateTime.parse(date, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli()
+                    - System.currentTimeMillis();
+            clockOffset = Math.abs(difference) > 30_000 ? difference : 0;
+        } catch (DateTimeParseException ignored) {
+            logger.debug("BYD returned an invalid HTTP Date header");
+        }
+    }
+
+    @FunctionalInterface
+    private interface Request {
+        JsonObject execute() throws IOException, GeneralSecurityException, InterruptedException;
+    }
+
+    private JsonObject retry(Request request) throws IOException, GeneralSecurityException, InterruptedException {
+        try {
+            return request.execute();
+        } catch (SessionExpiredException | ClockAdjustedException e) {
+            logger.debug("Retrying BYD request after code {}", e.code);
+            return request.execute();
+        }
+    }
+
+    static class BydApiException extends IOException {
+        private static final long serialVersionUID = 1L;
+        final String code;
+
+        BydApiException(String code) {
+            super("BYD rejected the request (code " + code + ")." + ("1003".equals(code) ? " Check system time." : ""));
+            this.code = code;
+        }
+    }
+
+    private static final class SessionExpiredException extends BydApiException {
+        private static final long serialVersionUID = 1L;
+
+        SessionExpiredException(String code) {
+            super(code);
+        }
+    }
+
+    private static final class ClockAdjustedException extends BydApiException {
+        private static final long serialVersionUID = 1L;
+
+        ClockAdjustedException() {
+            super("1003");
+        }
+    }
+
+    static final class PinRejectedException extends IOException {
+        private static final long serialVersionUID = 1L;
     }
 
     static final class SetupException extends IOException {

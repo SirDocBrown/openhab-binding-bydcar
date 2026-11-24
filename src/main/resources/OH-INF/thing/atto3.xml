@@ -53,7 +53,7 @@
 				<label>Vehicle Identification Number</label>
 				<description>Required when the account has more than one vehicle.</description>
 			</parameter>
-			<parameter name="refreshInterval" type="integer" min="1" unit="min">
+			<parameter name="refreshInterval" type="integer" min="5" unit="min">
 				<label>Refresh Interval</label>
 				<description>Time between telemetry requests in minutes.</description>
 				<default>15</default>

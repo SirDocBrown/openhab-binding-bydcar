@@ -29,7 +29,7 @@ The supported account type is an email/password owner account registered in Germ
 | `email` | Yes | BYD account email |
 | `password` | Yes | BYD account password |
 | `vin` | For multiple vehicles | VIN of the intended ATTO 3 |
-| `refreshInterval` | No | Minutes between requests, default 15, minimum 1 |
+| `refreshInterval` | No | Minutes between requests, default 15, minimum 5 |
 | `enableControl` | No | Enable vehicle commands, default false |
 | `controlPin` | For control | Six-digit operation PIN from the BYD app, entered locally in the Thing settings |
 | `climateTemperature` | No | HVAC start target in °C, 15–31, default 21 |
@@ -83,7 +83,9 @@ Send one of these commands to the first Item and monitor the second.
 The binding verifies the PIN before the first command in a session. Only one command can be in progress.
 The result changes from `PENDING` to `CONFIRMED` on a successful vehicle acknowledgement, `REJECTED` on an explicit negative acknowledgement or `UNCONFIRMED` on timeout or communication failure.
 An unconfirmed command may already have executed. Check the vehicle or the BYD app before sending it again.
-The binding polls for the outcome and never automatically resends the command. Door lock and other telemetry Items show measured state on the next poll.
+A disabled control reports `DISABLED`, an overlapping command or BYD code 6024 reports `BUSY`, and unknown commands report `INVALID: <value>`.
+A cloud rejection before dispatch reports `REJECTED (code X)`. Only an explicit expired-session rejection permits one repeat of the trigger after login.
+After receiving a serial, the binding retries only the result query. Door lock and other telemetry Items show measured state on the next poll.
 Vehicle support varies by equipment, account permissions and BYD service availability.
 
 ## File-based example
@@ -104,12 +106,13 @@ String AttoCommandResult { channel="bydvehicle:atto3:car:commandResult" }
 
 The binding signs in, selects the vehicle and requests a telemetry sample.
 If the cloud returns a request serial, it checks the result up to ten times at 1.5-second intervals.
-Linked Item refreshes reuse the latest local sample. A shorter polling interval increases cloud traffic and may wake the vehicle more frequently.
+Linked Item refreshes reuse the latest local sample. Polling can wake the T-Box and draw power from the 12 V battery. After upgrading, raise any existing interval below five minutes.
 
 - **Login rejected** — verify the owner credentials in the BYD app and check the clock on the openHAB host.
 - **Check the vehicle VIN** — verify that the car appears in this account and enter its VIN if the account contains multiple vehicles.
 - **No usable sample** — check when the app last received a vehicle report. Automatic polling resumes after the configured interval.
-- **Session expired** — the binding logs in again on the next scheduled poll.
+- **BYD code 1003** — check the system time on the openHAB host. The client uses the server date to compensate for clock differences over 30 seconds. Login and command triggers are not replayed on clock errors.
+- **Session expired** — the binding logs in again and retries the rejected request once.
 
 ## Development
 
