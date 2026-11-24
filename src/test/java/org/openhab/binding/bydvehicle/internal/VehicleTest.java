@@ -307,4 +307,39 @@ class VehicleTest {
                 () -> lost.control(RemoteAction.LOCK, "hash", 21, 15, ""));
         assertEquals(1, Collections.frequency(paths, "/control/remoteControl"));
     }
+
+    @Test
+    void retriesLoginOnceAfterClockCorrection() throws Exception {
+        var v = fixtures("pybyd-responses.txt");
+        String login = "/app/account/login";
+        var now = ZonedDateTime.now(ZoneOffset.UTC);
+        String ahead = now.plusMinutes(10).format(DateTimeFormatter.RFC_1123_DATE_TIME);
+        String behind = now.minusMinutes(10).format(DateTimeFormatter.RFC_1123_DATE_TIME);
+        List<String> paths = new ArrayList<>();
+        var client = scriptedClient(List.of(error("1003"), v.get(0), v.get(1), v.get(3)), paths, Map.of(0, ahead));
+        assertTrue(Telemetry.ready(client.read("")));
+        assertEquals(
+                List.of(login, login, "/app/account/getAllListByUserId", "/vehicleInfo/vehicle/vehicleRealTimeRequest"),
+                paths);
+        paths.clear();
+        var repeated = scriptedClient(List.of(error("1003"), error("1003")), paths, Map.of(0, ahead, 1, behind));
+        assertEquals("1003", assertThrows(BydClient.BydApiException.class, () -> repeated.read("")).code);
+        assertEquals(List.of(login, login), paths);
+        paths.clear();
+        var small = scriptedClient(List.of(error("1003")), paths,
+                Map.of(0, now.plusSeconds(15).format(DateTimeFormatter.RFC_1123_DATE_TIME)));
+        assertEquals("1003", assertThrows(BydClient.BydApiException.class, () -> small.read("")).code);
+        assertEquals(List.of(login), paths);
+    }
+
+    @Test
+    void serviceTimeUsesLocalClockWithCorrectedRequestTimestamp() throws Exception {
+        BydProtocol protocol = new BydProtocol("owner@example.invalid", "test password");
+        long before = System.currentTimeMillis();
+        String corrected = Long.toString(before + 600_000);
+        JsonObject request = protocol.login(corrected);
+        long serviceTime = request.get("serviceTime").getAsLong();
+        assertEquals(corrected, request.get("reqTimestamp").getAsString());
+        assertTrue(serviceTime >= before && serviceTime <= System.currentTimeMillis());
+    }
 }

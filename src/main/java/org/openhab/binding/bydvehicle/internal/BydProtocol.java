@@ -112,7 +112,7 @@ final class BydProtocol {
 
     private static JsonObject finish(JsonObject outer) throws GeneralSecurityException {
         put(outer, "ostype", "and", "imei", "BANGCLE01234", "mac", "00:00:00:00:00:00", "model", "POCO F1", "sdk", "35",
-                "mod", "Xiaomi", "serviceTime", outer.get("reqTimestamp").getAsString());
+                "mod", "Xiaomi", "serviceTime", Long.toString(System.currentTimeMillis()));
         String digest = md5(outer.toString()).toLowerCase(Locale.ROOT);
         outer.addProperty("checkcode", digest.substring(24) + digest.substring(8, 24) + digest.substring(0, 8));
         return outer;

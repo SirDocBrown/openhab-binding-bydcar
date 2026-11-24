@@ -76,7 +76,7 @@ public class VehicleHandler extends BaseThingHandler {
     @Override
     public synchronized void initialize() {
         Configuration config = getConfigAs(Configuration.class);
-        if (config.email.isBlank() || config.password.isEmpty() || config.refreshInterval < 5) {
+        if (config.email.isBlank() || config.password.isEmpty()) {
             updateStatus(ThingStatusDetail.CONFIGURATION_ERROR, "@text/config-invalid");
             return;
         }
@@ -96,7 +96,10 @@ public class VehicleHandler extends BaseThingHandler {
             duration = config.climateDuration;
             BydClient active = new BydClient(config.email.strip(), config.password, config.vin.strip());
             client = active;
-            interval = config.refreshInterval;
+            interval = Math.max(5, config.refreshInterval);
+            if (config.refreshInterval < 5) {
+                logger.warn("refreshInterval raised to 5 minutes");
+            }
             publish("commandResult", new StringType(config.enableControl ? "READY" : "DISABLED"));
             updateStatus(ThingStatus.UNKNOWN);
             job = scheduler.schedule(() -> poll(active, "", 0), 0, TimeUnit.SECONDS);

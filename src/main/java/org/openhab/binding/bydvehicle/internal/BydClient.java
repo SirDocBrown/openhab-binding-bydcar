@@ -74,11 +74,24 @@ final class BydClient {
         http.shutdownNow();
     }
 
+    private JsonObject login() throws GeneralSecurityException, IOException, InterruptedException {
+        return post(LOGIN, protocol.login(now()), protocol.loginKey()).getAsJsonObject().getAsJsonObject("token");
+    }
+
     private Session authenticate() throws GeneralSecurityException, IOException, InterruptedException {
         Session active = session;
         if (active == null) {
-            JsonObject token = post(LOGIN, protocol.login(now()), protocol.loginKey()).getAsJsonObject()
-                    .getAsJsonObject("token");
+            long previousOffset = clockOffset;
+            JsonObject token;
+            try {
+                token = login();
+            } catch (BydApiException e) {
+                if (!"1003".equals(e.code) || Math.abs(clockOffset - previousOffset) <= 30_000) {
+                    throw e;
+                }
+                logger.debug("Retrying BYD login with corrected request timestamp");
+                token = login();
+            }
             active = new Session(required(token, "userId"), BydProtocol.md5(required(token, "signToken")),
                     BydProtocol.md5(required(token, "encryToken")));
             session = active;

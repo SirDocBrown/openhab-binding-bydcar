@@ -106,12 +106,12 @@ String AttoCommandResult { channel="bydvehicle:atto3:car:commandResult" }
 
 The binding signs in, selects the vehicle and requests a telemetry sample.
 If the cloud returns a request serial, it checks the result up to ten times at 1.5-second intervals.
-Linked Item refreshes reuse the latest local sample. Polling can wake the T-Box and draw power from the 12 V battery. After upgrading, raise any existing interval below five minutes.
+Linked Item refreshes reuse the latest local sample. Polling can wake the T-Box and draw power from the 12 V battery. If a stored interval is below five minutes, the binding logs a warning and uses five minutes automatically.
 
 - **Login rejected** — verify the owner credentials in the BYD app and check the clock on the openHAB host.
 - **Check the vehicle VIN** — verify that the car appears in this account and enter its VIN if the account contains multiple vehicles.
 - **No usable sample** — check when the app last received a vehicle report. Automatic polling resumes after the configured interval.
-- **BYD code 1003** — check the system time on the openHAB host. The client uses the server date to compensate for clock differences over 30 seconds. Login and command triggers are not replayed on clock errors.
+- **BYD code 1003** — check the system time on the openHAB host. The client uses the server date to compensate for clock differences over 30 seconds. A login rejected with code 1003 is retried once if that response changes the offset by more than 30 seconds. The new login uses the corrected request timestamp and the local system time for `serviceTime`. A clock error on a remote command trigger is returned immediately.
 - **Session expired** — the binding logs in again and retries the rejected request once.
 
 ## Development
